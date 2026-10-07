@@ -32,3 +32,68 @@ El término **Big Data** se aplica cuando el volumen, la velocidad o la variedad
 1. **Agotamiento de Memoria (RAM Out-of-Memory):** Al subir la escala a cientos de millones de filas, intentar cargar el archivo completo con `pd.read_csv()` provocará un colapso por falta de memoria RAM.
 2. **Cuellos de Botella en I/O y Cómputo:** Los archivos CSV planos son ineficientes para lectura masiva. Procesar secuencialmente en un solo hilo de CPU volvería las consultas y agregaciones extremadamente lentas.
 3. **Latencia de Procesamiento:** Si la velocidad de entrada de datos es continua (streaming), el modelo en lote tradicional no podrá responder a las alertas en tiempo real.
+---
+
+## 7. Batch y Streaming
+
+### Tipo de procesamiento realizado y justificación
+El programa ejecutado (`analisis.py`) utiliza **procesamiento por lotes (Batch Processing)**. Se justifica porque opera sobre un conjunto de datos estático y delimitado (un archivo CSV cargado previamente en disco con 100,000 registros), procesando toda la información de manera secuencial en un solo bloque de tiempo sin entrada de eventos continuos en tiempo real.
+
+### Enfoque para emitir una alerta a pocos segundos de una lectura > 85 °C
+Para este caso de uso se requiere un enfoque de **procesamiento en tiempo real (Streaming Processing)**.
+* **Justificación de tiempo:** Un sobrecalentamiento (>85 °C) requiere una acción inmediata (latencia de milisegundos a pocos segundos) para prevenir fallas catastróficas o paradas no planificadas de maquinaria.
+* **Tecnologías sugeridas:** Un gestor de mensajería como **Apache Kafka** o **RabbitMQ** para capturar el evento en transmisión, combinado con un motor de streaming como **Apache Flink** o **Spark Streaming** que analice el flujo y dispare alertas instantáneas.
+
+### Enfoque para generar un resumen al terminar el día
+Para el resumen diario se utiliza un enfoque de **procesamiento por lotes (Batch Processing)** scheduled (programado).
+* **Justificación de tiempo:** Las métricas consolidadas (como promedios diarios, tendencias e historial) no requieren inmediatez. Es más eficiente acumular todas las lecturas del día y ejecutar una tarea programada (ej. un job nocturno) que agregue los datos con menor costo computacional.
+
+---
+
+## 8. Arquitecturas Lambda y Kappa
+
+### Escenario A: Combinación de lote histórico y procesamiento rápido reciente
+* **Arquitectura elegida:** **Arquitectura Lambda**.
+* **Justificación:** La arquitectura Lambda se diseñó específicamente para equilibrar la precisión de datos históricos con la baja latencia de datos recientes. Divide el procesamiento en dos capas paralelas: la capa de lotes (*Batch Layer*) para recalcular con precisión todo el historial, y la capa de velocidad (*Speed Layer*) para procesar el flujo reciente en tiempo real.
+
+#### Diagrama de la propuesta (Lambda)
+```text
+                     ┌───────────────────┐     ┌─────────────────┐
+               ┌────>│  Capa de Lotes    │---->│ Vista de Lotes  │────┐
+               │     │  (Batch Layer)    │     │  (Re-cálculo)   │    │
+┌───────────┐  │     └───────────────────┘     └─────────────────┘    │    ┌─────────────────┐
+│ Fuente de │──┤                                                      ├--->│ Vista Unificada │
+│   Datos   │  │     ┌───────────────────┐     ┌─────────────────┐    │    │ (Serving Layer) │
+└───────────┘  └────>│ Capa de Velocidad │---->│ Vista en Tiempo │────┘    └─────────────────┘
+                     │   (Speed Layer)   │     │      Real       │
+                     └───────────────────┘     └─────────────────┘
+```
+
+
+---
+
+## 9. Analítica descriptiva, predictiva y prescriptiva
+
+### Analítica Descriptiva (¿Qué sucedió?)
+A partir del análisis de los 100,000 registros del dataset:
+1. **Hallazgo 1:** Se detectaron **1,523 lecturas con temperatura crítica (> 85 °C)** en total.
+2. **Hallazgo 2:** La **Planta Norte** registró el promedio de temperatura más elevado con **68.4 °C**, posicionándose además como la planta con mayor número de alertas acumuladas.
+
+---
+
+### Analítica Predictiva (¿Qué podría suceder?)
+* **Pregunta de investigación:** *¿Tiene la máquina un riesgo inminente de sufrir una avería mecánica en las próximas 48 horas tras presentar patrones repetidos de sobrecalentamiento?*
+* **Datos adicionales necesarios:**
+  - Historial de mantenimiento preventivo y correctivo de cada equipo.
+  - Horas de operación continuas y antigüedad del equipo.
+  - Mediciones de vibración (RMS / picos) sincronizadas en el mismo intervalo de tiempo.
+  - Registros de carga de trabajo o presión operativa durante la medición.
+
+---
+
+### Analítica Prescriptiva (¿Qué debemos hacer?)
+* **Acción propuesta:** Implementar una inspección técnica prioritaria y la reprogramación preventiva de carga de trabajo para las máquinas que registren más de 3 alertas continuas en un periodo de 12 horas, derivando la producción temporalmente a líneas secundarias.
+* **Información a revisar antes de decidir:**
+  - Diagnóstico previo de sensores (para descartar fallas de calibración del sensor).
+  - Disponibilidad de repuestos críticos en almacén.
+  - Impacto económico de la pausa programada en la cadena de producción vs. el costo de una parada no no planeada por fallo catastrófico.
